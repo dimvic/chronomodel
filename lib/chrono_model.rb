@@ -73,3 +73,9 @@ end
 if ActiveRecord::ConnectionAdapters.respond_to?(:register)
   ActiveRecord::ConnectionAdapters.register 'chronomodel', 'ChronoModel::Adapter', 'chrono_model/adapter'
 end
+
+# TODO: Remove when dropping Rails < 7.1 compatibility
+# Ref rails/rails@1d98bc563a8a7faf26238eaaa54a3257a95d644d
+unless Arel::Table.method_defined?(:table_name)
+  Arel::Table.send(:alias_method, :table_name, :name)
+end

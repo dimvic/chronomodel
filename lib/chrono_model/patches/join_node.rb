@@ -12,25 +12,14 @@ module ChronoModel
     # it expects, yet producing SQL that fetches from history tables
     # as-of-time.
     #
-    # TODO: Remove when dropping Rails < 7.1 compatibility
+    # TODO: Maybe remove when dropping Rails < 7.1 compatibility
     class JoinNode < Arel::Nodes::SqlLiteral
       attr_reader :name, :table_name, :table_alias, :as_of_time
 
       def initialize(join_node, history_model, as_of_time)
-        # Handle both Arel::Table (which has .name method) and other join node types
-        # (which have .table_name method) to extract the table name consistently
-        table_name =
-          if join_node.respond_to?(:table_name)
-            join_node.table_name
-          elsif join_node.respond_to?(:name)
-            join_node.name
-          else
-            raise ArgumentError, "Cannot determine table name from #{join_node.class}: expected :table_name or :name method"
-          end
-
-        @name        = table_name
-        @table_name  = table_name
-        @table_alias = join_node.table_alias if join_node.respond_to?(:table_alias)
+        @name        = join_node.table_name
+        @table_name  = join_node.table_name
+        @table_alias = join_node.table_alias
 
         @as_of_time  = as_of_time
 
