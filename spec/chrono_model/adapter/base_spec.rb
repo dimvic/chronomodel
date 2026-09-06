@@ -34,6 +34,68 @@ RSpec.describe ChronoModel::Adapter do
     end
   end
 
+  describe '.columns' do
+    subject { adapter.columns(table).find { |column| column.name == 'test' } }
+
+    context 'with temporal tables' do
+      include_context 'with temporal tables'
+
+      it { is_expected.to have_attributes(default: 'default-value', null: false) }
+    end
+
+    context 'with plain tables' do
+      include_context 'with plain tables'
+
+      it { is_expected.to have_attributes(default: 'default-value', null: false) }
+    end
+  end
+
+  describe '.primary_key' do
+    subject { adapter.primary_key(table) }
+
+    context 'with temporal tables' do
+      include_context 'with temporal tables'
+
+      it { is_expected.to eq 'id' }
+    end
+
+    context 'with plain tables' do
+      include_context 'with plain tables'
+
+      it { is_expected.to eq 'id' }
+    end
+  end
+
+  describe 'reading many tables at once', if: ActiveRecord::VERSION::STRING >= '8.2' do
+    include_context 'with temporal tables'
+
+    before do
+      adapter.create_table 'plain_table', &columns
+      adapter.add_index 'plain_table', :foo
+      adapter.on_temporal_schema { adapter.add_index table, :foo }
+    end
+
+    after { adapter.drop_table 'plain_table' }
+
+    let(:tables) { ['plain_table', table] }
+
+    it 'reads temporal tables in the temporal schema, in the requested order' do
+      defaults = adapter.columns(tables).transform_values { |cols| cols.to_h { |c| [c.name, c.default] } }
+
+      expect(defaults.keys).to eq tables
+      expect(defaults[table]).to eq(defaults['plain_table']).and include('test' => 'default-value')
+    end
+
+    it { expect(adapter.primary_keys(tables)).to eq('plain_table' => ['id'], table => ['id']) }
+
+    it {
+      expect(adapter.indexes(tables).transform_values { |indexes| indexes.map(&:name) })
+        .to eq('plain_table' => ['index_plain_table_on_foo'], table => ['index_test_table_on_foo'])
+    }
+
+    it { expect(adapter.columns([])).to eq({}) }
+  end
+
   describe '.on_schema' do
     subject(:on_schema) { adapter }
 
@@ -76,9 +138,18 @@ RSpec.describe ChronoModel::Adapter do
 
         it {
           expect { on_schema }
-            .to raise_error(/current transaction is aborted/)
-            .and(change { adapter.instance_variable_get(:@schema_search_path) })
+            .to raise_error(ActiveRecord::StatementInvalid, /syntax error/)
+            .and(change { adapter.instance_variable_get(:@schema_search_path) }.to(nil))
         }
+
+        it 'restores the search path after rollback' do
+          expect { on_schema }.to raise_error(ActiveRecord::StatementInvalid)
+
+          adapter.execute 'ROLLBACK'
+
+          expect(adapter.schema_search_path).to eq '"$user", public'
+          expect(adapter).to be_in_schema(:default)
+        end
       end
     end
 

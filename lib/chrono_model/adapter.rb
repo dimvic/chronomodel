@@ -56,7 +56,7 @@ module ChronoModel
       chrono_upgrade_warning
     end
 
-    # Runs primary_key, indexes and default_sequence_name in the
+    # Runs primary_keys, indexes and default_sequence_name in the
     # temporal schema, as the table there defined is the source for
     # this information.
     #
@@ -70,27 +70,21 @@ module ChronoModel
     #
     # NOTE: These methods are dynamically defined, see the source.
     #
-    def primary_key(table_name); end
-
-    %i[primary_key indexes default_sequence_name].each do |method|
-      define_method(method) do |*args|
-        table_name = args.first
-        return super(*args) unless is_chrono?(table_name)
-
-        on_schema(TEMPORAL_SCHEMA, recurse: :ignore) { super(*args) }
+    %i[primary_keys indexes default_sequence_name].each do |method|
+      define_method(method) do |table_name, *args|
+        chrono_lookup(table_name, TEMPORAL_SCHEMA) { |name| super(name, *args) }
       end
     end
 
-    # Runs column_definitions in the temporal schema, as the table there
-    # defined is the source for this information.
+    # Runs columns in the temporal schema, as the table there defined is
+    # the source for this information.
     #
     # The default search path is included however, since the table
     # may reference types defined in other schemas, which result in their
     # names becoming schema qualified, which will cause type resolutions to fail.
-    def column_definitions(table_name)
-      return super unless is_chrono?(table_name)
-
-      on_schema("#{TEMPORAL_SCHEMA},#{schema_search_path}", recurse: :ignore) { super }
+    #
+    def columns(table_name)
+      chrono_lookup(table_name, "#{TEMPORAL_SCHEMA},#{schema_search_path}") { |name| super(name) }
     end
 
     # Evaluates the given block in the temporal schema.
@@ -131,10 +125,7 @@ module ChronoModel
       # there is no way to know which path will be restored when the
       # transaction ends.
       #
-      transaction_aborted =
-        chrono_connection.transaction_status == PG::Connection::PQTRANS_INERROR
-
-      if transaction_aborted && Thread.current['recursions'] == 1
+      if chrono_connection.transaction_status == PG::Connection::PQTRANS_INERROR
         @schema_search_path = nil
       else
         self.schema_search_path = old_path
@@ -178,6 +169,28 @@ module ChronoModel
     #
     def chrono_connection
       @chrono_connection ||= @raw_connection || @connection
+    end
+
+    # Reads schema metadata through the given block, evaluated in the
+    # given schema for temporal tables and as-is for plain ones.
+    #
+    # Rails 8.2 schema readers accept an Array of table names too and
+    # return a Hash keyed by table name: temporal and plain tables are
+    # then read separately, in one query each, and merged back in the
+    # requested order.
+    #
+    def chrono_lookup(table_name, schema)
+      unless table_name.is_a?(Array)
+        return yield(table_name) unless is_chrono?(table_name)
+
+        return on_schema(schema, recurse: :ignore) { yield(table_name) }
+      end
+
+      chrono, plain = table_name.partition { |name| is_chrono?(name) }
+
+      result = yield(plain)
+      result.merge!(on_schema(schema, recurse: :ignore) { yield(chrono) }) if chrono.any?
+      result.slice(*table_name.map(&:to_s))
     end
 
     # Counts the number of recursions in a thread local variable
