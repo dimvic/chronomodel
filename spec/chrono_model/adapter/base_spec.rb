@@ -34,6 +34,24 @@ RSpec.describe ChronoModel::Adapter do
     end
   end
 
+  describe 'reading many tables at once', if: ActiveRecord::VERSION::STRING >= '8.2' do
+    include_context 'with temporal tables'
+
+    before { adapter.create_table 'plain_table', &columns }
+    after  { adapter.drop_table 'plain_table' }
+
+    let(:tables) { [table, 'plain_table'] }
+
+    it 'reads temporal tables in the temporal schema' do
+      defaults = adapter.columns(tables).transform_values { |cols| cols.to_h { |c| [c.name, c.default] } }
+
+      expect(defaults[table]).to eq(defaults['plain_table']).and include('test' => 'default-value')
+    end
+
+    it { expect(adapter.primary_keys(tables)).to eq(table => ['id'], 'plain_table' => ['id']) }
+    it { expect(adapter.indexes(tables)).to eq(table => [], 'plain_table' => []) }
+  end
+
   describe '.on_schema' do
     subject(:on_schema) { adapter }
 
@@ -76,9 +94,18 @@ RSpec.describe ChronoModel::Adapter do
 
         it {
           expect { on_schema }
-            .to raise_error(/current transaction is aborted/)
-            .and(change { adapter.instance_variable_get(:@schema_search_path) })
+            .to raise_error(ActiveRecord::StatementInvalid, /syntax error/)
+            .and(change { adapter.instance_variable_get(:@schema_search_path) }.to(nil))
         }
+
+        it 'restores the search path after rollback' do
+          expect { on_schema }.to raise_error(ActiveRecord::StatementInvalid)
+
+          adapter.execute 'ROLLBACK'
+
+          expect(adapter.schema_search_path).to eq '"$user", public'
+          expect(adapter).to be_in_schema(:default)
+        end
       end
     end
 

@@ -131,10 +131,7 @@ module ChronoModel
       # there is no way to know which path will be restored when the
       # transaction ends.
       #
-      transaction_aborted =
-        chrono_connection.transaction_status == PG::Connection::PQTRANS_INERROR
-
-      if transaction_aborted && Thread.current['recursions'] == 1
+      if chrono_connection.transaction_status == PG::Connection::PQTRANS_INERROR
         @schema_search_path = nil
       else
         self.schema_search_path = old_path
@@ -178,6 +175,22 @@ module ChronoModel
     #
     def chrono_connection
       @chrono_connection ||= @raw_connection || @connection
+    end
+
+    # Rails 8.2 schema readers answer for many tables at once through these
+    # methods, resolving unqualified names in the current search path and
+    # bypassing the single table overrides above. Runs them in the temporal
+    # schema for temporal tables, as the table there defined is the source
+    # for this information.
+    #
+    %i[fetch_column_definitions fetch_primary_keys fetch_indexes].each do |method|
+      define_method(method) do |tables|
+        chrono, plain = tables.partition { |table| is_chrono?(table) }
+        result = super(plain)
+        next result if chrono.empty?
+
+        on_schema("#{TEMPORAL_SCHEMA},#{schema_search_path}", recurse: :ignore) { result.merge(super(chrono)) }
+      end
     end
 
     # Counts the number of recursions in a thread local variable
