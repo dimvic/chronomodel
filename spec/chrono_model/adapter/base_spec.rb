@@ -34,22 +34,66 @@ RSpec.describe ChronoModel::Adapter do
     end
   end
 
+  describe '.columns' do
+    let(:defaults) { adapter.columns(table).to_h { |column| [column.name, column.default] } }
+
+    context 'with temporal tables' do
+      include_context 'with temporal tables'
+
+      it { expect(defaults).to include('test' => 'default-value', 'bool' => 'false') }
+    end
+
+    context 'with plain tables' do
+      include_context 'with plain tables'
+
+      it { expect(defaults).to include('test' => 'default-value', 'bool' => 'false') }
+    end
+  end
+
+  describe '.primary_key' do
+    subject { adapter.primary_key(table) }
+
+    context 'with temporal tables' do
+      include_context 'with temporal tables'
+
+      it { is_expected.to eq 'id' }
+    end
+
+    context 'with plain tables' do
+      include_context 'with plain tables'
+
+      it { is_expected.to eq 'id' }
+    end
+  end
+
   describe 'reading many tables at once', if: ActiveRecord::VERSION::STRING >= '8.2' do
     include_context 'with temporal tables'
 
-    before { adapter.create_table 'plain_table', &columns }
-    after  { adapter.drop_table 'plain_table' }
+    before do
+      adapter.create_table 'plain_table', &columns
+      adapter.add_index 'plain_table', :foo
+      adapter.on_temporal_schema { adapter.add_index table, :foo }
+    end
 
-    let(:tables) { [table, 'plain_table'] }
+    after { adapter.drop_table 'plain_table' }
 
-    it 'reads temporal tables in the temporal schema' do
+    let(:tables) { ['plain_table', table] }
+
+    it 'reads temporal tables in the temporal schema, in the requested order' do
       defaults = adapter.columns(tables).transform_values { |cols| cols.to_h { |c| [c.name, c.default] } }
 
+      expect(defaults.keys).to eq tables
       expect(defaults[table]).to eq(defaults['plain_table']).and include('test' => 'default-value')
     end
 
-    it { expect(adapter.primary_keys(tables)).to eq(table => ['id'], 'plain_table' => ['id']) }
-    it { expect(adapter.indexes(tables)).to eq(table => [], 'plain_table' => []) }
+    it { expect(adapter.primary_keys(tables)).to eq('plain_table' => ['id'], table => ['id']) }
+
+    it {
+      expect(adapter.indexes(tables).transform_values { |indexes| indexes.map(&:name) })
+        .to eq('plain_table' => ['index_plain_table_on_foo'], table => ['index_test_table_on_foo'])
+    }
+
+    it { expect(adapter.columns([])).to eq({}) }
   end
 
   describe '.on_schema' do
