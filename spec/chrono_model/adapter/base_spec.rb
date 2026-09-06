@@ -35,18 +35,18 @@ RSpec.describe ChronoModel::Adapter do
   end
 
   describe '.columns' do
-    let(:defaults) { adapter.columns(table).to_h { |column| [column.name, column.default] } }
+    subject { adapter.columns(table).find { |column| column.name == 'test' } }
 
     context 'with temporal tables' do
       include_context 'with temporal tables'
 
-      it { expect(defaults).to include('test' => 'default-value', 'bool' => 'false') }
+      it { is_expected.to have_attributes(default: 'default-value', null: false) }
     end
 
     context 'with plain tables' do
       include_context 'with plain tables'
 
-      it { expect(defaults).to include('test' => 'default-value', 'bool' => 'false') }
+      it { is_expected.to have_attributes(default: 'default-value', null: false) }
     end
   end
 
